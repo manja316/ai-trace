@@ -15,6 +15,7 @@ Usage:
 from ai_trace.tracer import Tracer
 from ai_trace.step import Step
 from ai_trace.exceptions import TraceError
+from ai_trace.receipts import SignedReceipt, ReceiptBuilder
 
-__all__ = ["Tracer", "Step", "TraceError"]
-__version__ = "0.1.0"
+__all__ = ["Tracer", "Step", "TraceError", "SignedReceipt", "ReceiptBuilder"]
+__version__ = "0.2.0"

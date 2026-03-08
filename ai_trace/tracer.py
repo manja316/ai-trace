@@ -26,13 +26,22 @@ class Tracer:
         If True (default) automatically saves after each step finishes.
     meta : dict
         Arbitrary metadata stored in trace header (model name, version, etc).
+    signing_key : Ed25519PrivateKey, optional
+        If provided, every step produces a signed receipt (Ed25519).
+        Requires ``pip install ai-decision-tracer[signed]``.
+        If None and cryptography is installed, a session keypair is auto-generated.
+        If cryptography is not installed, receipts are hash-only.
+    sign : bool
+        If True (default False), enable receipt generation. When True, a
+        ReceiptBuilder is created (auto-generating keys if signing_key is None).
+        When False, no receipts are created regardless of signing_key.
 
     Example
     -------
-    >>> tracer = Tracer("my_agent", meta={"model": "claude-haiku-4-5"})
+    >>> tracer = Tracer("my_agent", sign=True, meta={"model": "claude-haiku-4-5"})
     >>> with tracer.step("classify", input="hello") as step:
     ...     step.log(label="greeting", confidence=0.99)
-    >>> tracer.save()
+    >>> tracer.save_receipts()
     """
 
     def __init__(
@@ -41,6 +50,8 @@ class Tracer:
         trace_dir: str | Path = "traces",
         auto_save: bool = True,
         meta: Optional[Dict[str, Any]] = None,
+        signing_key=None,
+        sign: bool = False,
     ):
         self.agent = agent
         self.trace_dir = Path(trace_dir)
@@ -50,6 +61,16 @@ class Tracer:
         self._session_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         self._steps: List[Step] = []
         self._writer = TraceWriter(self.trace_dir, self.agent, self._session_id)
+
+        # Receipt signing
+        self._receipt_builder = None
+        if sign or signing_key is not None:
+            from ai_trace.receipts import ReceiptBuilder
+            self._receipt_builder = ReceiptBuilder(
+                agent_id=self.agent,
+                session_id=self._session_id,
+                signing_key=signing_key,
+            )
 
     # ── Step factory ─────────────────────────────────────────────────────────
 
@@ -72,6 +93,8 @@ class Tracer:
         self._steps.append(s)
         if self.auto_save:
             self._writer.append_step(s)
+        if self._receipt_builder is not None:
+            self._receipt_builder.create_receipt(s)
 
     # ── Manual save ──────────────────────────────────────────────────────────
 
@@ -98,6 +121,37 @@ class Tracer:
             "errors": err,
             "avg_duration_ms": round(sum(durations) / len(durations), 2) if durations else None,
         }
+
+    # ── Receipts ──────────────────────────────────────────────────────────────
+
+    @property
+    def receipts(self):
+        """List of SignedReceipt objects (empty if signing not enabled)."""
+        if self._receipt_builder is None:
+            return []
+        return self._receipt_builder.receipts
+
+    @property
+    def public_key(self) -> str:
+        """Base64-encoded Ed25519 public key (empty if signing not enabled)."""
+        if self._receipt_builder is None:
+            return ""
+        return self._receipt_builder.public_key_base64
+
+    def verify_receipts(self):
+        """Verify all receipt signatures and chain integrity.
+
+        Returns dict: {"valid": bool, "receipts_checked": int, "errors": [...]}
+        """
+        if self._receipt_builder is None:
+            return {"valid": True, "receipts_checked": 0, "errors": []}
+        return self._receipt_builder.verify_chain()
+
+    def save_receipts(self, path=None):
+        """Save all signed receipts to a JSON file. Returns Path."""
+        if self._receipt_builder is None:
+            raise ValueError("Signing not enabled. Pass sign=True or signing_key to Tracer().")
+        return self._receipt_builder.save_receipts(path)
 
     def __repr__(self) -> str:
         s = self.summary()
