@@ -172,6 +172,56 @@ ai-trace --dir /var/log/agent/traces list
 
 ---
 
+## Real-World Usage: Polymarket Oracle
+
+[polymarket-oracle](https://github.com/LuciferForge/polymarket-oracle) is an autonomous trading bot that uses ai-trace to sign every trade decision with Ed25519 receipts. Real money, real trades, cryptographically provable track record.
+
+```python
+from ai_trace import Tracer
+
+oracle = Tracer("polymarket-oracle", sign=True, meta={"version": "4.1"})
+
+# Every trade gets a signed receipt
+with oracle.step("trade_executed", market="btc-updown-15m-1773050400") as step:
+    step.log(strategy="MOMENTUM", direction="DOWN", entry_price=0.82,
+             shares=25, win_rate_est=93.0, ev=2.15)
+
+# Every resolution closes the loop
+with oracle.step("trade_resolved", market="btc-updown-15m-1773050400") as step:
+    step.log(result="WIN", pnl=4.50, price_open=66200.0, price_close=65900.0)
+
+# Verify the entire chain
+oracle.save_receipts()
+# → Anyone can verify independently with the public key
+```
+
+---
+
+## Signed Receipts (v0.2.0)
+
+Enable Ed25519-signed, hash-chained receipts for tamper-proof audit trails:
+
+```python
+tracer = Tracer("agent", sign=True)
+
+with tracer.step("decision") as step:
+    step.log(action="approve", reason="policy compliant")
+
+# Save and verify
+tracer.save_receipts()
+print(tracer.public_key)  # Share this — anyone can verify
+
+# Third-party verification (no private key needed)
+from ai_trace import ReceiptBuilder
+meta, receipts = ReceiptBuilder.load_receipts("receipts/agent_receipts.json")
+result = ReceiptBuilder.verify_chain_from_list(receipts)
+assert result["valid"]  # Chain intact, all signatures valid
+```
+
+Each receipt contains: step name, context, logs, timestamp, content hash (SHA-256), Ed25519 signature, and a `previous_hash` linking to the prior receipt. Delete or modify any receipt and the chain breaks.
+
+---
+
 ## Use with other stack libraries
 
 ```python
